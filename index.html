@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Prší Online - Multiplayer</title>
+    <style>
+        :root { --bg: #064e3b; --accent: #fbbf24; --card-w: 80px; --card-h: 120px; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: white; margin: 0; overflow: hidden; height: 100vh; }
+        
+        #lobby { background: rgba(0,0,0,0.85); position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        input { padding: 12px; border-radius: 8px; border: none; margin-bottom: 15px; width: 220px; font-size: 1.1rem; }
+
+        #game-area { 
+            display: none; width: 100vw; height: 100vh; 
+            display: grid; 
+            grid-template-areas: ". top ." "left board right" ". bottom .";
+            grid-template-columns: 200px 1fr 200px; grid-template-rows: 140px 1fr 180px;
+        }
+
+        .hand-container { display: flex; justify-content: center; align-items: center; position: relative; }
+        
+        /* Překrývání karet pro úsporu místa */
+        .hand-bottom { grid-area: bottom; padding-bottom: 20px; }
+        .hand-bottom .card { margin-right: -45px; }
+        .hand-bottom .card:last-child { margin-right: 0; }
+
+        .hand-top { grid-area: top; }
+        .hand-top .card { margin-right: -60px; }
+
+        .hand-left { grid-area: left; flex-direction: column; }
+        .hand-left .card { transform: rotate(90deg); margin-bottom: -90px; }
+        
+        .hand-right { grid-area: right; flex-direction: column; }
+        .hand-right .card { transform: rotate(-90deg); margin-bottom: -90px; }
+
+        .board-center { grid-area: board; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        
+        .card { 
+            width: var(--card-w); height: var(--card-h); background: white; border-radius: 8px; 
+            color: #1e293b; position: relative; box-shadow: 0 4px 8px rgba(0,0,0,0.5); 
+            cursor: pointer; border: 1px solid #999; flex-shrink: 0; transition: transform 0.2s;
+        }
+        .hand-bottom .card:hover { transform: translateY(-30px); z-index: 500 !important; }
+
+        .card.Srdce { color: #dc2626; } .card.Kule { color: #d97706; } .card.Zeleně { color: #16a34a; } .card.Žaludy { color: #78350f; }
+        .card.hidden { background: #064e3b; border: 2px solid white; color: transparent !important; }
+        .card.hidden * { display: none; }
+
+        .card .val { position: absolute; top: 5px; left: 8px; font-weight: 900; font-size: 0.85rem; text-transform: uppercase; }
+        .card .suit { font-size: 2.8rem; position: absolute; top: 55%; left: 50%; transform: translate(-50%, -50%); }
+
+        .deck-btn { width: var(--card-w); height: var(--card-h); background: #047857; border: 3px solid white; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .deck-btn.active { border-color: var(--accent); box-shadow: 0 0 20px var(--accent); transform: scale(1.05); }
+
+        #status { font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: 2px; }
+        #game-alert { position: fixed; top: 20%; left: 50%; transform: translateX(-50%); background: #dc2626; padding: 12px 30px; border-radius: 12px; font-weight: bold; z-index: 8000; display: none; border: 2px solid white; box-shadow: 0 0 20px rgba(0,0,0,0.5); text-align: center; }
+
+        .flying { position: fixed; z-index: 9000; pointer-events: none; transition: all 0.5s cubic-bezier(0.2, 1, 0.3, 1); }
+        .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9500; flex-direction: column; align-items: center; justify-content: center; }
+        button { padding: 12px 24px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; background: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <div id="lobby">
+        <h1 style="color: var(--accent)">PRŠÍ ONLINE</h1>
+        <input type="text" id="roomInput" placeholder="Kód místnosti">
+        <button onclick="join()">VSTOUPIT DO HRY</button>
+    </div>
+
+    <div id="game-alert"></div>
+
+    <div id="game-area">
+        <div id="pos-top" class="hand-container hand-top"></div>
+        <div id="pos-left" class="hand-container hand-left"></div>
+        <div class="board-center">
+            <div id="suit-banner" style="background:var(--accent); color:black; padding:8px 25px; border-radius:30px; font-weight:bold; margin-bottom:10px; display:none;">ZMĚNĚNO NA: <span id="suit-val"></span></div>
+            <div id="status">PŘIPOJOVÁNÍ...</div>
+            <div style="display:flex; gap:40px; align-items:center;">
+                <div id="deck" class="deck-btn" onclick="drawCard()">BALÍČEK</div>
+                <div id="pile"></div>
+            </div>
+        </div>
+        <div id="pos-right" class="hand-container hand-right"></div>
+        <div id="pos-bottom" class="hand-container hand-bottom"></div>
+    </div>
+
+    <div id="suit-picker" class="overlay">
+        <h2 style="margin-bottom:30px; letter-spacing: 2px;">VYBERTE BARVU</h2>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+            <button onclick="chooseSuit('Srdce')" style="font-size:3rem; padding: 20px; cursor: pointer;">♥️</button>
+            <button onclick="chooseSuit('Kule')" style="font-size:3rem; padding: 20px; cursor: pointer;">🔔</button>
+            <button onclick="chooseSuit('Zeleně')" style="font-size:3rem; padding: 20px; cursor: pointer;">🍃</button>
+            <button onclick="chooseSuit('Žaludy')" style="font-size:3rem; padding: 20px; cursor: pointer;">🌰</button>
+        </div>
+    </div>
+
+    <div id="win-modal" class="overlay">
+        <h1 id="win-msg" style="font-size:3rem; margin-bottom:30px;">VÍTĚZSTVÍ! 🎉</h1>
+        <div id="ready-status" style="margin-bottom:20px; color:var(--accent);"></div>
+        <div style="display:flex; gap:20px;">
+            <button id="btn-restart" onclick="socket.emit('restartRequest', currentRoom)">HRÁT ZNOVU</button>
+            <button style="background:#64748b; color:white;" onclick="location.reload()">DO LOBBY</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentRoom = "";
+        const ICONS = { 'Srdce': '♥️', 'Kule': '🔔', 'Zeleně': '🍃', 'Žaludy': '🌰' };
+
+        function join() {
+            currentRoom = document.getElementById('roomInput').value.trim();
+            if(currentRoom) {
+                socket.emit('joinRoom', currentRoom);
+                document.getElementById('lobby').style.display = 'none';
+                document.getElementById('game-area').style.display = 'grid';
+            }
+        }
+
+        function createCardEl(c, isHidden = false) {
+            const div = document.createElement('div');
+            div.className = `card ${isHidden ? 'hidden' : (c ? c.suit : '')}`;
+            if(!isHidden && c) {
+                div.innerHTML = `<div class="val">${c.value}</div><div class="suit">${ICONS[c.suit]}</div>`;
+            }
+            return div;
+        }
+
+        function animateMove(start, end, card, isHidden) {
+            if(!start || !end) return;
+            const sR = start.getBoundingClientRect(); const eR = end.getBoundingClientRect();
+            const fly = createCardEl(card, isHidden);
+            fly.classList.add('flying');
+            fly.style.left = sR.left + 'px'; fly.style.top = sR.top + 'px';
+            document.body.appendChild(fly);
+            if(start.classList.contains('card')) start.style.visibility = 'hidden';
+            setTimeout(() => { fly.style.left = eR.left + 'px'; fly.style.top = eR.top + 'px'; fly.style.transform = 'rotate(360deg)'; }, 10);
+            setTimeout(() => fly.remove(), 550);
+        }
+
+        socket.on('gameState', (game) => {
+            const me = game.players.find(p => p.id === socket.id);
+            if(!me) return;
+            const isMyTurn = game.turnId === socket.id;
+
+            // STATUS OKAMŽITĚ
+            document.getElementById('status').innerText = isMyTurn ? "🟢 JSI NA ŘADĚ" : "🔴 ČEKEJ...";
+            document.getElementById('deck').classList.toggle('active', isMyTurn);
+
+            // Výpočet pozic
+            const myIdx = game.players.findIndex(p => p.id === socket.id);
+            const others = [];
+            for(let i=1; i<game.players.length; i++) others.push(game.players[(myIdx + i) % game.players.length]);
+            const posMap = others.length === 1 ? ['pos-top'] : (others.length === 2 ? ['pos-left', 'pos-right'] : ['pos-left', 'pos-top', 'pos-right']);
+
+            // OPRAVENÁ LOGIKA ANIMACÍ
+            if(game.lastAction) {
+                const act = game.lastAction;
+                const isActorMe = act.playerId === socket.id;
+                
+                if(act.type === 'play') {
+                    const cont = isActorMe ? document.getElementById('pos-bottom') : document.getElementById(posMap[others.findIndex(o=>o.id===act.playerId)]);
+                    animateMove(cont.children[act.cardIndex] || cont.firstChild, document.getElementById('pile'), act.card, false);
+                } else if(act.type === 'draw') {
+                    // Animujeme pouze pokud typ je DRAW, nikoliv SKIP
+                    const end = isActorMe ? document.getElementById('pos-bottom') : document.getElementById(posMap[others.findIndex(o=>o.id===act.playerId)]);
+                    animateMove(document.getElementById('deck'), end, null, true);
+                }
+            }
+
+            setTimeout(() => {
+                document.getElementById('pos-bottom').innerHTML = '';
+                me.hand.forEach((c, i) => {
+                    const el = createCardEl(c);
+                    el.onclick = () => socket.emit('playCard', { roomId: currentRoom, cardIndex: i });
+                    document.getElementById('pos-bottom').appendChild(el);
+                });
+
+                ['pos-left', 'pos-top', 'pos-right'].forEach(id => document.getElementById(id).innerHTML = '');
+                others.forEach((o, i) => {
+                    const container = document.getElementById(posMap[i]);
+                    for(let j=0; j<o.handCount; j++) container.appendChild(createCardEl(null, true));
+                });
+
+                document.getElementById('pile').innerHTML = '';
+                document.getElementById('pile').appendChild(createCardEl(game.pile[game.pile.length-1]));
+
+                const alert = document.getElementById('game-alert');
+                alert.style.display = (isMyTurn && (game.penalty > 0 || game.skip > 0)) ? 'block' : 'none';
+                if(isMyTurn) alert.innerText = game.penalty > 0 ? `BEREŠ ${game.penalty} KARTY!` : `STOJÍŠ! (ESO)\nKLIKNI NA BALÍČEK`;
+
+                if(game.requestedSuit) {
+                    document.getElementById('suit-banner').style.display = 'block';
+                    document.getElementById('suit-val').innerText = `${game.requestedSuit} ${ICONS[game.requestedSuit]}`;
+                } else document.getElementById('suit-banner').style.display = 'none';
+
+                if(isMyTurn && game.waitingForSuit) document.getElementById('suit-picker').style.display = 'flex';
+                
+                const winModal = document.getElementById('win-modal');
+                if(game.winner) {
+                    winModal.style.display = 'flex';
+                    document.getElementById('win-msg').innerText = game.winner === socket.id ? "VÍTĚZSTVÍ! 🎉" : "PROHRA! 💀";
+                    const readyCount = game.players.filter(p => p.ready).length;
+                    document.getElementById('ready-status').innerText = `Připraveno: ${readyCount} / ${game.players.length}`;
+                } else {
+                    winModal.style.display = 'none';
+                }
+            }, game.lastAction ? 550 : 0);
+        });
+
+        function drawCard() { socket.emit('drawCard', currentRoom); }
+        function chooseSuit(s) { socket.emit('chooseSuit', { roomId: currentRoom, suit: s }); document.getElementById('suit-picker').style.display = 'none'; }
+    </script>
+</body>
+</html>
