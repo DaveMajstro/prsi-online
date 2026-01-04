@@ -19,15 +19,25 @@ function createDeck() {
     return deck.sort(() => Math.random() - 0.5);
 }
 
-function initGame(game) {
+// Upravená inicializace hry se střídáním začínajícího hráče
+function initGame(game, isRestart = false) {
     game.deck = createDeck();
     game.pile = [game.deck.pop()];
-    game.turn = 0;
+    
+    // Logika střídání startu
+    if (!isRestart) {
+        game.starterIndex = 0; // První hra začíná hráč 0
+    } else {
+        game.starterIndex = (game.starterIndex + 1) % game.players.length; // Posun na dalšího
+    }
+    
+    game.turn = game.starterIndex;
     game.winner = null;
     game.penalty = 0;
     game.skip = 0;
     game.requestedSuit = null;
     game.waitingForSuit = false;
+    
     game.players.forEach(p => {
         p.hand = game.deck.splice(0, 4);
         p.ready = false;
@@ -43,9 +53,11 @@ function broadcastGameState(roomId, lastAction = null) {
         sockets.forEach(socket => {
             const playersInfo = game.players.map(p => ({
                 id: p.id,
+                name: p.name,
                 handCount: p.hand.length,
                 hand: p.id === socket.id ? p.hand : [],
-                ready: p.ready
+                ready: p.ready,
+                score: p.score
             }));
             socket.emit('gameState', { ...game, players: playersInfo, turnId, lastAction });
         });
@@ -53,16 +65,27 @@ function broadcastGameState(roomId, lastAction = null) {
 }
 
 io.on('connection', (socket) => {
-    socket.on('joinRoom', (roomId) => {
+    socket.on('joinRoom', ({ roomId, playerName }) => {
         socket.join(roomId);
         socket.roomId = roomId;
-        if (!rooms[roomId]) rooms[roomId] = { players: [] };
+        if (!rooms[roomId]) {
+            rooms[roomId] = { players: [], starterIndex: 0 };
+        }
         const game = rooms[roomId];
+        
         if (game.players.length < 4 && !game.players.find(p => p.id === socket.id)) {
             let startingHand = [];
             if (game.deck && game.deck.length > 4 && !game.winner) startingHand = game.deck.splice(0, 4);
-            game.players.push({ id: socket.id, hand: startingHand, ready: false });
-            if (game.players.length >= 2 && (!game.deck || game.winner)) initGame(game);
+            
+            game.players.push({ 
+                id: socket.id, 
+                name: playerName.trim() || `Hráč ${game.players.length + 1}`, 
+                hand: startingHand, 
+                ready: false, 
+                score: 0 
+            });
+            
+            if (game.players.length >= 2 && (!game.deck || game.winner)) initGame(game, false);
         }
         broadcastGameState(roomId);
     });
@@ -83,7 +106,11 @@ io.on('connection', (socket) => {
             game.requestedSuit = null;
             if (played.value === '7') game.penalty += 2;
             if (played.value === 'Eso') game.skip += 1;
-            if (player.hand.length === 0) game.winner = socket.id;
+            
+            if (player.hand.length === 0) {
+                game.winner = socket.id;
+                player.score += 1;
+            }
             else if (played.value === 'Svršek') game.waitingForSuit = true;
             else game.turn = (game.turn + 1) % game.players.length;
             broadcastGameState(roomId, { type: 'play', playerId: socket.id, card: played, cardIndex });
@@ -96,10 +123,9 @@ io.on('connection', (socket) => {
         
         let type = 'draw';
         let count = 0;
-
         if (game.skip > 0) {
             game.skip = 0;
-            type = 'skip'; // Klíčová změna: Akce je SKIP, ne DRAW
+            type = 'skip';
         } else {
             count = game.penalty > 0 ? game.penalty : 1;
             game.penalty = 0;
@@ -130,7 +156,8 @@ io.on('connection', (socket) => {
         if (game) {
             const p = game.players.find(p => p.id === socket.id);
             if (p) p.ready = true;
-            if (game.players.every(p => p.ready) && game.players.length >= 2) initGame(game);
+            // Restartujeme hru pouze když jsou všichni ready
+            if (game.players.every(p => p.ready) && game.players.length >= 2) initGame(game, true);
             broadcastGameState(roomId);
         }
     });
@@ -143,5 +170,6 @@ io.on('connection', (socket) => {
         }
     });
 });
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server běží na portu ${PORT}`));
