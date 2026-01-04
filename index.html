@@ -10,6 +10,10 @@
         #lobby { background: rgba(0,0,0,0.85); position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         input { padding: 12px; border-radius: 8px; border: none; margin-bottom: 15px; width: 220px; font-size: 1.1rem; }
 
+        #scoreboard { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.5); padding: 10px 15px; border-radius: 10px; border: 1px solid var(--accent); z-index: 1000; font-size: 0.9rem; line-height: 1.4; min-width: 120px; }
+        .score-item { display: flex; justify-content: space-between; gap: 20px; }
+        .score-id { color: var(--accent); font-weight: bold; }
+
         #game-area { 
             display: none; width: 100vw; height: 100vh; 
             display: grid; 
@@ -18,14 +22,13 @@
         }
 
         .hand-container { display: flex; justify-content: center; align-items: center; position: relative; }
-        
-        /* Překrývání karet pro úsporu místa */
         .hand-bottom { grid-area: bottom; padding-bottom: 20px; }
         .hand-bottom .card { margin-right: -45px; }
         .hand-bottom .card:last-child { margin-right: 0; }
+        .hand-bottom .card:hover { transform: translateY(-30px); z-index: 500 !important; }
 
         .hand-top { grid-area: top; }
-        .hand-top .card { margin-right: -60px; }
+        .hand-top .card { margin-right: -55px; }
 
         .hand-left { grid-area: left; flex-direction: column; }
         .hand-left .card { transform: rotate(90deg); margin-bottom: -90px; }
@@ -40,7 +43,6 @@
             color: #1e293b; position: relative; box-shadow: 0 4px 8px rgba(0,0,0,0.5); 
             cursor: pointer; border: 1px solid #999; flex-shrink: 0; transition: transform 0.2s;
         }
-        .hand-bottom .card:hover { transform: translateY(-30px); z-index: 500 !important; }
 
         .card.Srdce { color: #dc2626; } .card.Kule { color: #d97706; } .card.Zeleně { color: #16a34a; } .card.Žaludy { color: #78350f; }
         .card.hidden { background: #064e3b; border: 2px solid white; color: transparent !important; }
@@ -62,8 +64,14 @@
 </head>
 <body>
 
+    <div id="scoreboard" style="display:none;">
+        <div style="font-weight: bold; border-bottom: 1px solid var(--accent); margin-bottom: 5px; padding-bottom: 3px;">🏆 SKÓRE</div>
+        <div id="score-list"></div>
+    </div>
+
     <div id="lobby">
         <h1 style="color: var(--accent)">PRŠÍ ONLINE</h1>
+        <input type="text" id="nameInput" placeholder="Tvoje jméno" maxlength="15">
         <input type="text" id="roomInput" placeholder="Kód místnosti">
         <button onclick="join()">VSTOUPIT DO HRY</button>
     </div>
@@ -111,11 +119,14 @@
         const ICONS = { 'Srdce': '♥️', 'Kule': '🔔', 'Zeleně': '🍃', 'Žaludy': '🌰' };
 
         function join() {
+            const playerName = document.getElementById('nameInput').value.trim();
             currentRoom = document.getElementById('roomInput').value.trim();
+            
             if(currentRoom) {
-                socket.emit('joinRoom', currentRoom);
+                socket.emit('joinRoom', { roomId: currentRoom, playerName: playerName });
                 document.getElementById('lobby').style.display = 'none';
                 document.getElementById('game-area').style.display = 'grid';
+                document.getElementById('scoreboard').style.display = 'block';
             }
         }
 
@@ -145,26 +156,31 @@
             if(!me) return;
             const isMyTurn = game.turnId === socket.id;
 
-            // STATUS OKAMŽITĚ
+            const scoreList = document.getElementById('score-list');
+            scoreList.innerHTML = '';
+            game.players.forEach((p) => {
+                const item = document.createElement('div');
+                item.className = 'score-item';
+                const displayName = p.name + (p.id === socket.id ? " (JÁ)" : "");
+                item.innerHTML = `<span class="score-id">${displayName}</span> <span>${p.score}</span>`;
+                scoreList.appendChild(item);
+            });
+
             document.getElementById('status').innerText = isMyTurn ? "🟢 JSI NA ŘADĚ" : "🔴 ČEKEJ...";
             document.getElementById('deck').classList.toggle('active', isMyTurn);
 
-            // Výpočet pozic
             const myIdx = game.players.findIndex(p => p.id === socket.id);
             const others = [];
             for(let i=1; i<game.players.length; i++) others.push(game.players[(myIdx + i) % game.players.length]);
             const posMap = others.length === 1 ? ['pos-top'] : (others.length === 2 ? ['pos-left', 'pos-right'] : ['pos-left', 'pos-top', 'pos-right']);
 
-            // OPRAVENÁ LOGIKA ANIMACÍ
             if(game.lastAction) {
                 const act = game.lastAction;
                 const isActorMe = act.playerId === socket.id;
-                
                 if(act.type === 'play') {
                     const cont = isActorMe ? document.getElementById('pos-bottom') : document.getElementById(posMap[others.findIndex(o=>o.id===act.playerId)]);
                     animateMove(cont.children[act.cardIndex] || cont.firstChild, document.getElementById('pile'), act.card, false);
                 } else if(act.type === 'draw') {
-                    // Animujeme pouze pokud typ je DRAW, nikoliv SKIP
                     const end = isActorMe ? document.getElementById('pos-bottom') : document.getElementById(posMap[others.findIndex(o=>o.id===act.playerId)]);
                     animateMove(document.getElementById('deck'), end, null, true);
                 }
@@ -201,7 +217,8 @@
                 const winModal = document.getElementById('win-modal');
                 if(game.winner) {
                     winModal.style.display = 'flex';
-                    document.getElementById('win-msg').innerText = game.winner === socket.id ? "VÍTĚZSTVÍ! 🎉" : "PROHRA! 💀";
+                    const winnerPlayer = game.players.find(p => p.id === game.winner);
+                    document.getElementById('win-msg').innerText = game.winner === socket.id ? "VÍTĚZSTVÍ! 🎉" : `${winnerPlayer.name} VYHRÁL! 💀`;
                     const readyCount = game.players.filter(p => p.ready).length;
                     document.getElementById('ready-status').innerText = `Připraveno: ${readyCount} / ${game.players.length}`;
                 } else {
